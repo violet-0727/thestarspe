@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Heart Link",
+    "slug": "heart-link-mobile",
+    "version": "1.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A1E2E"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.heartlink.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A1E2E"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.heartlink.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b14f40f1-f946-4bb6-b5dc-fb8f33ba6487"
+      }
+    },
+    "owner": "violet_0727"
+  }
+}
