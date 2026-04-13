@@ -2,7 +2,7 @@
   "expo": {
     "name": "Heart Link",
     "slug": "heart-link-mobile",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -28,13 +28,26 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许 Heart Link 将聊天截图保存到相册",
+          "savePhotosPermission": "允许 Heart Link 将聊天截图保存到相册"
+        }
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "b14f40f1-f946-4bb6-b5dc-fb8f33ba6487"
       }
     },
-    "owner": "violet_0727"
+    "owner": "violet_0727",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b14f40f1-f946-4bb6-b5dc-fb8f33ba6487"
+    }
   }
 }

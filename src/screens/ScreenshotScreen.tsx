@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,46 @@ import {
   Alert,
   StyleSheet,
   SafeAreaView,
+  ScrollView,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
+import { captureRef } from 'react-native-view-shot';
 import { useAppState, useAppDispatch } from '../store/AppContext';
 import { useTheme } from '../theme';
 import { resolveAvatarSource } from '../constants/avatars';
+import { getEmojiSource } from '../constants/emojis';
 import type { ChatMessage, Contact } from '../types';
+
+const EMOJI_REGEX = /^\[emoji:(.+?)\]$/;
+
+function isEmojiContent(content: string | undefined): string | null {
+  if (!content) return null;
+  const match = content.match(EMOJI_REGEX);
+  return match ? match[1] : null;
+}
+
+function renderContentWithEmoji(content: string | undefined, textStyle: any) {
+  if (!content) return null;
+  const emojiFile = isEmojiContent(content);
+  if (emojiFile) {
+    const src = getEmojiSource(emojiFile);
+    if (src) {
+      return <Image source={src} style={{ width: 80, height: 80 }} resizeMode="contain" />;
+    }
+  }
+  const imgMatch = content.match(/^\[image:(.+?)\]$/);
+  if (imgMatch) {
+    return (
+      <Image
+        source={{ uri: imgMatch[1] }}
+        style={{ width: 180, height: 140, borderRadius: 8 }}
+        resizeMode="cover"
+      />
+    );
+  }
+  return <Text style={textStyle}>{content}</Text>;
+}
 
 export default function ScreenshotScreen() {
   const theme = useTheme();
@@ -34,10 +67,11 @@ export default function ScreenshotScreen() {
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rangeStart, setRangeStart] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const captureViewRef = useRef<View>(null);
 
   const toggleItem = useCallback(
     (index: number) => {
-      // Range selection mode
       if (rangeStart !== null) {
         const lo = Math.min(rangeStart, index);
         const hi = Math.max(rangeStart, index);
@@ -81,46 +115,49 @@ export default function ScreenshotScreen() {
     Alert.alert('范围选择', '点击结束位置的消息来完成范围选择');
   }, [selected]);
 
-  const handleSave = useCallback(async () => {
+  // ── Selected messages for capture ──
+  const selectedMessages = useMemo(() => {
+    const sorted = Array.from(selected).sort((a, b) => a - b);
+    return sorted.map((i) => messages[i]).filter(Boolean);
+  }, [selected, messages]);
+
+  // ── Save as image to photo album ──
+  const handleSaveToAlbum = useCallback(async () => {
     if (selected.size === 0) {
-      Alert.alert('提示', '请先选择要导出的消息');
+      Alert.alert('提示', '请先选择要截取的消息');
       return;
     }
 
-    const sorted = Array.from(selected).sort((a, b) => a - b);
-    const exported = sorted.map((i) => messages[i]);
-    const json = JSON.stringify(
-      {
-        contact: contact
-          ? { id: contact.id, name: contact.name }
-          : null,
-        messages: exported,
-        exportedAt: new Date().toISOString(),
-      },
-      null,
-      2,
-    );
+    setSaving(true);
 
     try {
-      const fileName = `chat_export_${Date.now()}.json`;
-      const filePath = `${FileSystem.cacheDirectory}${fileName}`;
-      await FileSystem.writeAsStringAsync(filePath, json, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(filePath, {
-          mimeType: 'application/json',
-          dialogTitle: '导出聊天记录',
-          UTI: 'public.json',
-        });
-      } else {
-        Alert.alert('完成', '文件已保存到缓存目录');
+      // Request permission
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('权限不足', '需要相册权限才能保存图片');
+        setSaving(false);
+        return;
       }
+
+      // Wait a frame for the capture view to render
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Capture the preview view as image
+      const uri = await captureRef(captureViewRef, {
+        format: 'png',
+        quality: 1,
+        result: 'tmpfile',
+      });
+
+      // Save to photo album
+      const asset = await MediaLibrary.createAssetAsync(uri);
+      Alert.alert('保存成功', '聊天截图已保存到相册');
     } catch (err: any) {
-      Alert.alert('导出失败', err.message ?? '未知错误');
+      Alert.alert('保存失败', err.message ?? '未知错误');
+    } finally {
+      setSaving(false);
     }
-  }, [selected, messages, contact]);
+  }, [selected]);
 
   // ── No active contact ──
   if (!activeContactId || !contact) {
@@ -137,6 +174,60 @@ export default function ScreenshotScreen() {
 
   const contactAvatar = resolveAvatarSource(contact.avatar);
 
+  // ── Render a message for the capture view (no checkboxes) ──
+  const renderCaptureMessage = (item: ChatMessage, index: number) => {
+    if (item.type === 'system') {
+      return (
+        <View key={index} style={styles.captureSystemRow}>
+          <Text style={[styles.systemText, { color: c.textMuted }]}>
+            {item.content}
+          </Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'choice') {
+      return (
+        <View key={index} style={[styles.captureChoiceCard, { backgroundColor: c.bgModal, borderColor: c.borderColor }]}>
+          <Text style={[styles.choiceLabel, { color: c.accentOrange }]}>
+            {item.title}
+          </Text>
+          {item.options?.map((opt, i) => (
+            <View key={i} style={[styles.captureChoiceOption, { borderColor: c.borderColor }]}>
+              <Text style={[styles.choiceOpt, { color: c.textPrimary }]}>{opt}</Text>
+            </View>
+          ))}
+        </View>
+      );
+    }
+
+    const isSelf = item.sender === 'self';
+    return (
+      <View key={index} style={[styles.captureMsgRow, isSelf && styles.captureMsgRowSelf]}>
+        {!isSelf && (
+          <Image
+            source={item.avatar ? resolveAvatarSource(item.avatar) : contactAvatar}
+            style={styles.captureMsgAvatar}
+          />
+        )}
+        <View style={[styles.captureBubble, isSelf ? { backgroundColor: c.bubbleSelf } : { backgroundColor: c.bubbleOther }]}>
+          {!isSelf && item.senderName && (
+            <Text style={[styles.captureSenderName, { color: c.accentTeal }]}>
+              {item.senderName}
+            </Text>
+          )}
+          {renderContentWithEmoji(item.content, [styles.msgText, { color: c.textPrimary }])}
+          {item.time && (
+            <Text style={[styles.captureTimeText, { color: c.textMuted }]}>
+              {item.time}
+            </Text>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  // ── Render a selectable item in the list ──
   const renderItem = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isSelected = selected.has(index);
 
@@ -152,7 +243,7 @@ export default function ScreenshotScreen() {
       content = (
         <View>
           <Text style={[styles.choiceLabel, { color: c.accentOrange }]}>
-            [选项] {item.title}
+            [{'\u9009\u9879'}] {item.title}
           </Text>
           {item.options?.map((opt, i) => (
             <Text key={i} style={[styles.choiceOpt, { color: c.textSecondary }]}>
@@ -177,15 +268,11 @@ export default function ScreenshotScreen() {
                 {item.senderName}
               </Text>
             )}
-            <Text
-              style={[
-                styles.msgText,
-                { color: c.textPrimary },
-                isSelf && styles.msgTextSelf,
-              ]}
-            >
-              {item.content}
-            </Text>
+            {renderContentWithEmoji(item.content, [
+              styles.msgText,
+              { color: c.textPrimary },
+              isSelf && styles.msgTextSelf,
+            ])}
             {item.time && (
               <Text
                 style={[
@@ -273,12 +360,16 @@ export default function ScreenshotScreen() {
             范围
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.toolBtn, { backgroundColor: c.accentTeal }]} onPress={handleSave}>
-          <Text style={styles.toolBtnText}>保存</Text>
+        <TouchableOpacity
+          style={[styles.toolBtn, { backgroundColor: c.accentTeal, opacity: saving ? 0.5 : 1 }]}
+          onPress={handleSaveToAlbum}
+          disabled={saving}
+        >
+          <Text style={styles.toolBtnText}>{saving ? '保存中...' : '保存到相册'}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Messages */}
+      {/* Messages list for selection */}
       <FlatList
         data={messages}
         keyExtractor={(_, i) => String(i)}
@@ -290,6 +381,35 @@ export default function ScreenshotScreen() {
           </View>
         }
       />
+
+      {/* Hidden capture view - renders selected messages as chat UI for screenshot */}
+      {selected.size > 0 && (
+        <View style={styles.captureWrapper}>
+          <View
+            ref={captureViewRef}
+            collapsable={false}
+            style={[styles.captureContainer, { backgroundColor: c.bgDark }]}
+          >
+            {/* Capture header */}
+            <View style={[styles.captureHeader, { backgroundColor: c.bgHeader, borderBottomColor: c.borderColor }]}>
+              <Image source={contactAvatar} style={styles.captureHeaderAvatar} />
+              <Text style={[styles.captureHeaderName, { color: c.textPrimary }]}>
+                {contact.name}
+              </Text>
+            </View>
+            {/* Capture messages */}
+            <View style={styles.captureMessages}>
+              {selectedMessages.map((msg, i) => renderCaptureMessage(msg, i))}
+            </View>
+            {/* Watermark */}
+            <View style={styles.captureFooter}>
+              <Text style={[styles.captureFooterText, { color: c.textMuted }]}>
+                Heart Link - 星塔旅人
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -418,5 +538,90 @@ const styles = StyleSheet.create({
   },
   timeTextSelf: {
     textAlign: 'right',
+  },
+
+  // ─── Capture view (offscreen) ───
+  captureWrapper: {
+    position: 'absolute',
+    left: -9999,
+    top: 0,
+  },
+  captureContainer: {
+    width: 390,
+    padding: 0,
+  },
+  captureHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  captureHeaderAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  captureHeaderName: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  captureMessages: {
+    padding: 12,
+  },
+  captureSystemRow: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  captureChoiceCard: {
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  captureChoiceOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  captureMsgRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 10,
+    gap: 8,
+  },
+  captureMsgRowSelf: {
+    flexDirection: 'row-reverse',
+  },
+  captureMsgAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  captureBubble: {
+    maxWidth: '75%',
+    padding: 10,
+    borderRadius: 12,
+  },
+  captureSenderName: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  captureTimeText: {
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'right',
+  },
+  captureFooter: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingBottom: 12,
+  },
+  captureFooterText: {
+    fontSize: 10,
   },
 });

@@ -92,11 +92,10 @@ export default function ContactsScreen() {
       if (!lastMsg) return { preview: '暂无消息', time: '' };
 
       const content = lastMsg.content ?? '';
-      const isEmoji = /^<img\s+src="\/emojis\//.test(content);
-      const preview = isEmoji ? '【表情】' : content;
-      // Strip HTML tags for display in RN
-      const cleanPreview = preview.replace(/<[^>]*>/g, '');
-      return { preview: cleanPreview, time: lastMsg.time ?? '' };
+      const isEmoji = /^\[emoji:.+?\]$/.test(content);
+      const isImage = /^\[image:.+?\]$/.test(content);
+      const preview = isEmoji ? '【表情】' : isImage ? '【图片】' : content;
+      return { preview, time: lastMsg.time ?? '' };
     },
     [state.projectData.chats],
   );

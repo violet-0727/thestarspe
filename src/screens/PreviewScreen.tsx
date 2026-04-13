@@ -11,7 +11,38 @@ import {
 import { useAppState, useAppDispatch } from '../store/AppContext';
 import { useTheme } from '../theme';
 import { resolveAvatarSource } from '../constants/avatars';
+import { getEmojiSource } from '../constants/emojis';
 import type { ChatMessage, Contact } from '../types';
+
+const EMOJI_REGEX = /^\[emoji:(.+?)\]$/;
+
+function isEmojiContent(content: string | undefined): string | null {
+  if (!content) return null;
+  const match = content.match(EMOJI_REGEX);
+  return match ? match[1] : null;
+}
+
+function renderContentWithEmoji(content: string | undefined, textStyle: any) {
+  if (!content) return null;
+  const emojiFile = isEmojiContent(content);
+  if (emojiFile) {
+    const src = getEmojiSource(emojiFile);
+    if (src) {
+      return <Image source={src} style={{ width: 80, height: 80 }} resizeMode="contain" />;
+    }
+  }
+  const imgMatch = content.match(/^\[image:(.+?)\]$/);
+  if (imgMatch) {
+    return (
+      <Image
+        source={{ uri: imgMatch[1] }}
+        style={{ width: 180, height: 140, borderRadius: 8 }}
+        resizeMode="cover"
+      />
+    );
+  }
+  return <Text style={textStyle}>{content}</Text>;
+}
 
 type PlaybackState = 'idle' | 'playing' | 'paused';
 
@@ -163,9 +194,7 @@ export default function PreviewScreen() {
               {item.senderName}
             </Text>
           )}
-          <Text style={[styles.msgText, { color: c.textPrimary }]}>
-            {item.content}
-          </Text>
+          {renderContentWithEmoji(item.content, [styles.msgText, { color: c.textPrimary }])}
           {settings.showTimestamp && item.time && (
             <Text style={[styles.timeText, { color: c.textMuted }]}>
               {item.time}

@@ -1,6 +1,40 @@
-import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState, type ReactNode } from 'react';
+import * as FileSystem from 'expo-file-system/legacy';
 import type { Contact, ChatMessage, ProjectData, AppSettings } from '../types';
 import { defaultSettings } from '../types';
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+
+const SAVE_FILE = `${FileSystem.documentDirectory}thestars_project.json`;
+
+async function saveToFile(projectData: ProjectData, settings: AppSettings): Promise<void> {
+  try {
+    const data = { projectData, settings, savedAt: new Date().toISOString() };
+    await FileSystem.writeAsStringAsync(SAVE_FILE, JSON.stringify(data), {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+  } catch (e) {
+    console.warn('[AutoSave] Failed to save:', e);
+  }
+}
+
+async function loadFromFile(): Promise<{ projectData: ProjectData; settings: AppSettings } | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(SAVE_FILE);
+    if (!info.exists) return null;
+    const content = await FileSystem.readAsStringAsync(SAVE_FILE, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+    const parsed = JSON.parse(content);
+    if (parsed.projectData && parsed.settings) {
+      return { projectData: parsed.projectData, settings: parsed.settings };
+    }
+    return null;
+  } catch (e) {
+    console.warn('[AutoSave] Failed to load:', e);
+    return null;
+  }
+}
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -327,6 +361,26 @@ const AppDispatchContext = createContext<React.Dispatch<AppAction> | undefined>(
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, undefined, buildInitialState);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Load saved data on startup
+  useEffect(() => {
+    (async () => {
+      const saved = await loadFromFile();
+      if (saved) {
+        dispatch({ type: 'SET_PROJECT_DATA', payload: saved.projectData });
+        dispatch({ type: 'SET_SETTINGS', payload: saved.settings });
+        dispatch({ type: 'MARK_SAVED' });
+      }
+      setIsLoaded(true);
+    })();
+  }, []);
+
+  // Auto-save whenever projectData or settings change (after initial load)
+  useEffect(() => {
+    if (!isLoaded) return;
+    saveToFile(state.projectData, state.settings);
+  }, [state.projectData, state.settings, isLoaded]);
 
   return (
     <AppStateContext.Provider value={state}>
